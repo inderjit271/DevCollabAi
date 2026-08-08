@@ -489,7 +489,7 @@ if(member.role === "owner") {
 const transferOwnership = async (req,res) => {
 try {
 const {projectId} = req.params;
-const userId = req.body;
+const {userId} = req.body;
  const project = await Project.findById(projectId);
  if(!project) {
   return res.status(404).json({
@@ -497,18 +497,24 @@ const userId = req.body;
     message: "Project Not Found"
   })
  }
- const logUser = project.members.find(
+ if (!userId) {
+    return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+    });
+}
+ const currOwner = project.members.find(
   member => member.user.toString() === req.user._id.toString()
  );
-  if(!logUser) {
+  if(!currOwner) {
     return res.status(404).json({
       success:false,
       message:"log in User is not a member"
     })
   }
-if(logUser.role !== "owner") {
-  return res.status(400).json({
-   succes:false,
+if(currOwner.role !== "owner") {
+  return res.status(403).json({
+   success:false,
    message:"Only owner can transfer ownership"
   })
 }
@@ -521,9 +527,20 @@ if(!member) {
       message:"member not found"
     })
   }
-  logUser.role = "admin";
+  if(member.role === "owner") {
+    return res.status(400).json({
+      success:false,
+      message:"User is already the owner"
+    })
+  }
+  currOwner.role = "admin";
   member.role = "owner";
+  project.owner = userId;
   await project.save()
+  return res.status(200).json({
+    success:true,
+    message:"ownership transferred successfully"
+  })
 }catch(err) {
   console.log(err);
     return res.status(500).json({
@@ -532,7 +549,6 @@ if(!member) {
   })
 }
 }
-
 module.exports = {
   createProject,
   getProjects,
