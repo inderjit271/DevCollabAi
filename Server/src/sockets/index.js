@@ -1,134 +1,388 @@
-const jwt = require("jsonwebtoken")
+const jwt = require("jsonwebtoken");
 const cookie = require("cookie");
+
 const User = require("../models/user.model");
-const Project = require("../models/project.model")
+const Project = require("../models/project.model");
+const Message = require("../models/message.model");
+
 
 const initializeSocket = (io) => {
 
-    io.use(async (socket,next) => {
-        try{
-         const cookies = cookie.parse(socket.handshake.headers.cookie || "");
+    // =========================
+    // SOCKET AUTHENTICATION
+    // =========================
 
-         const token = cookies.token;
-         if(!token){
-            return next(new Error("unauthorized"))
-         }
-         const decoded = jwt.verify(token,process.env.JWT_SECRET)
+    io.use(async (socket, next) => {
 
-         const user = await user.findById(decoded.id).select("-password")
-         
-         if(!user) {
-            return next(new Error("User not found"))
-         }
-        socket.user = user
-        next()
-        }catch(err) {
-            next(new Error("Authentication Failed"));
-        }
-    });
+        try {
 
-    io.on("connection", (socket) => {
-        console.log(`${socket.user.name} Connected`);
+            const cookies = cookie.parse(
+                socket.handshake.headers.cookie || ""
+            );
 
-        socket.on("join-project",async (projectId) => {
-            try{
-                const project = await Project.findById(projectId)
+            const token = cookies.token;
 
-                if(!project) {
-                    return socket.emit("error",{
-                        message: "Project not found"
-                    });
-                }
-                const isMember = project.members.find(
-                    member => member.toString() === socket.user._id.toString()
+
+            if (!token) {
+
+                return next(
+                    new Error("Unauthorized")
                 );
 
-                if(!isMember) {
-                    return socket.emit("error", {
-                        message: "You are not a member of this project"
-                    });
-                }
-
-                socket.join(projectId);
-                console.log(`${socket.user.name} joined project ${project.title}`);
-
-                socket.emit("joined-project", {
-                    success: true,
-                    projectId,
-                    message: "Joined project successfully"
-                });
-            } catch(error) {
-                socket.emit("error", {
-                    message: "Internal server Error"
-                });
             }
-        });
 
-// Leave Project Room
 
-socket.on("leave-project", (projectId) => {
+            const decoded = jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
 
-    socket.leave(projectId);
 
-    console.log(`${socket.user.name} left project ${projectId}`);
+            const user = await User.findById(
+                decoded.id
+            ).select("-password");
 
-    socket.emit("left-project", {
-        success: true,
-        projectId,
-        message: "Left project room successfully"
-    });
 
-});
+            if (!user) {
 
-// Send Message
+                return next(
+                    new Error("User not found")
+                );
 
-socket.on("send-message", async (data) => {
+            }
 
-    try {
 
-        const { projectId, message } = data;
+            socket.user = user;
 
-        const project = await Project.findById(projectId);
+            next();
 
-        if (!project) {
-            return socket.emit("error", {
-                message: "Project not found"
-            });
+        } catch (error) {
+
+            console.log(
+                "Socket authentication error:",
+                error.message
+            );
+
+            next(
+                new Error("Authentication failed")
+            );
+
         }
 
-        const isMember = project.members.find(
-            member => member.user.toString() === socket.user._id.toString()
+    });
+
+
+    // =========================
+    // SOCKET CONNECTION
+    // =========================
+
+    io.on("connection", (socket) => {
+
+        console.log(
+            `${socket.user.name} Connected`
         );
 
-        if (!isMember) {
-            return socket.emit("error", {
-                message: "You are not a member of this project"
-            });
+
+        // =========================
+        // JOIN PROJECT ROOM
+        // =========================
+
+        socket.on(
+            "join-project",
+            async (projectId) => {
+
+                try {
+
+                    const project =
+                        await Project.findById(
+                            projectId
+                        );
+
+
+                    if (!project) {
+
+                        return socket.emit(
+                            "error",
+                            {
+                                message:
+                                    "Project not found",
+                            }
+                        );
+
+                    }
+
+
+                    // Check if user is a member
+
+                    const isMember =
+                        project.members.find(
+                            (member) => {
+
+                                const memberUserId =
+                                    member.user?._id ||
+                                    member.user;
+
+                                return (
+                                    memberUserId
+                                        ?.toString() ===
+                                    socket.user._id
+                                        .toString()
+                                );
+
+                            }
+                        );
+
+
+                    if (!isMember) {
+
+                        return socket.emit(
+                            "error",
+                            {
+                                message:
+                                    "You are not a member of this project",
+                            }
+                        );
+
+                    }
+
+
+                    // Join Socket.IO room
+
+                    socket.join(projectId);
+
+
+                    console.log(
+                        `${socket.user.name} joined project ${project.title}`
+                    );
+
+
+                    socket.emit(
+                        "joined-project",
+                        {
+                            success: true,
+                            projectId,
+                            message:
+                                "Joined project successfully",
+                        }
+                    );
+
+                } catch (error) {
+
+                    console.log(
+                        "Join project error:",
+                        error.message
+                    );
+
+
+                    socket.emit(
+                        "error",
+                        {
+                            message:
+                                "Internal Server Error",
+                        }
+                    );
+
+                }
+
+            }
+        );
+
+
+        // =========================
+        // LEAVE PROJECT ROOM
+        // =========================
+
+        socket.on(
+            "leave-project",
+            (projectId) => {
+
+                socket.leave(projectId);
+
+
+                console.log(
+                    `${socket.user.name} left project ${projectId}`
+                );
+
+
+                socket.emit(
+                    "left-project",
+                    {
+                        success: true,
+                        projectId,
+                        message:
+                            "Left project room successfully",
+                    }
+                );
+
+            }
+        );
+
+
+        // =========================
+        // SEND MESSAGE
+        // =========================
+
+
+socket.on(
+    "send-message",
+    async (data) => {
+
+        try {
+
+            const {
+                projectId,
+                message,
+            } = data;
+
+
+            if (
+                !projectId ||
+                !message?.trim()
+            ) {
+
+                return socket.emit(
+                    "error",
+                    {
+                        message:
+                            "Project ID and message are required",
+                    }
+                );
+
+            }
+
+
+            // =========================
+            // FIND PROJECT
+            // =========================
+
+            const project =
+                await Project.findById(
+                    projectId
+                );
+
+
+            if (!project) {
+
+                return socket.emit(
+                    "error",
+                    {
+                        message:
+                            "Project not found",
+                    }
+                );
+
+            }
+
+
+            // =========================
+            // CHECK MEMBERSHIP
+            // =========================
+
+            const isMember =
+                project.members.find(
+                    (member) => {
+
+                        const memberUserId =
+                            member.user?._id ||
+                            member.user;
+
+                        return (
+                            memberUserId
+                                ?.toString() ===
+                            socket.user._id
+                                .toString()
+                        );
+
+                    }
+                );
+
+
+            if (!isMember) {
+
+                return socket.emit(
+                    "error",
+                    {
+                        message:
+                            "You are not a member of this project",
+                    }
+                );
+
+            }
+
+
+            // =========================
+            // SAVE MESSAGE
+            // =========================
+
+            const newMessage =
+                await Message.create({
+                    project: projectId,
+                    sender: socket.user._id,
+                    message: message.trim(),
+                });
+
+
+            // =========================
+            // SEND TO PROJECT ROOM
+            // =========================
+
+            io.to(projectId).emit(
+                "receive-message",
+                {
+                    _id: newMessage._id,
+
+                    sender: {
+                        id: socket.user._id,
+                        name: socket.user.name,
+                    },
+
+                    message:
+                        newMessage.message,
+
+                    createdAt:
+                        newMessage.createdAt,
+                }
+            );
+
+        } catch (error) {
+
+            console.log(
+                "Send message error:",
+                error.message
+            );
+
+
+            socket.emit(
+                "error",
+                {
+                    message:
+                        "Internal Server Error",
+                }
+            );
+
         }
 
-        io.to(projectId).emit("receive-message", {
-            sender: {
-                id: socket.user._id,
-                name: socket.user.name,
-            },
-            message,
-            createdAt: new Date(),
-        });
-
-    } catch (error) {
-
-        socket.emit("error", {
-            message: "Internal Server Error"
-        });
-
     }
+);
 
-});
+        // =========================
+        // DISCONNECT
+        // =========================
 
-        socket.on("disconnect", () => {
-            console.log(`${socket.user.name} Disconnected`);
-        });
+        socket.on(
+            "disconnect",
+            () => {
+
+                console.log(
+                    `${socket.user?.name || "User"} Disconnected`
+                );
+
+            }
+        );
+
     });
+
 };
+
 
 module.exports = initializeSocket;

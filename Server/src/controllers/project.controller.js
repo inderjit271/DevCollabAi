@@ -1,6 +1,13 @@
 const mongoose = require('mongoose')
 const Project = require("../models/project.model");
 const User = require("../models/user.model")
+const Message = require("../models/message.model");
+const {
+    getRepository,
+    getBranches,
+    getFiles,
+    getFileContent,
+} = require("../services/github.service");
 
 const createProject = async (req, res) => {
   try {
@@ -549,6 +556,592 @@ if(!member) {
   })
 }
 }
+
+const getProjectMessages = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+
+        // Find project
+        const project =
+            await Project.findById(projectId);
+
+        if (!project) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+
+        }
+
+
+        // Check membership
+        const isMember =
+            project.members.find(
+                (member) => {
+
+                    const memberUserId =
+                        member.user?._id ||
+                        member.user;
+
+                    return (
+                        memberUserId
+                            ?.toString() ===
+                        req.user._id
+                            .toString()
+                    );
+
+                }
+            );
+
+
+        if (!isMember) {
+
+            return res.status(403).json({
+                success: false,
+                message:
+                    "You are not a member of this project",
+            });
+
+        }
+
+
+        // Get messages
+        const messages =
+            await Message.find({
+                project: projectId,
+            })
+                .populate(
+                    "sender",
+                    "name email"
+                )
+                .sort({
+                    createdAt: 1,
+                });
+
+
+        return res.status(200).json({
+            success: true,
+            messages,
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Get project messages error:",
+            error
+        );
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal Server Error",
+        });
+
+    }
+
+};
+
+// =========================
+// CONNECT GITHUB REPOSITORY
+// =========================
+
+const connectGithubRepository = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+        const { githubRepoUrl } = req.body;
+
+
+        // =========================
+        // VALIDATE URL
+        // =========================
+
+        if (!githubRepoUrl) {
+
+            return res.status(400).json({
+                success: false,
+                message: "GitHub repository URL is required",
+            });
+
+        }
+
+
+        // =========================
+        // FIND PROJECT
+        // =========================
+
+        const project =
+            await Project.findById(projectId);
+
+
+        if (!project) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+
+        }
+
+
+        // =========================
+        // OWNER CHECK
+        // =========================
+
+        if (
+            project.owner.toString() !==
+            req.user._id.toString()
+        ) {
+
+            return res.status(403).json({
+                success: false,
+                message:
+                    "Only project owner can connect GitHub repository",
+            });
+
+        }
+
+
+        // =========================
+        // VALIDATE GITHUB URL
+        // =========================
+
+        let parsedUrl;
+
+        try {
+
+            parsedUrl =
+                new URL(githubRepoUrl);
+
+        } catch (error) {
+
+            return res.status(400).json({
+                success: false,
+                message: "Invalid GitHub repository URL",
+            });
+
+        }
+
+
+        if (
+            parsedUrl.hostname !==
+                "github.com" &&
+            parsedUrl.hostname !==
+                "www.github.com"
+        ) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Please provide a valid GitHub repository URL",
+            });
+
+        }
+
+
+        // =========================
+        // GET REPOSITORY NAME
+        // =========================
+
+        const pathParts =
+            parsedUrl.pathname
+                .split("/")
+                .filter(Boolean);
+
+
+        if (pathParts.length < 2) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "Invalid GitHub repository URL",
+            });
+
+        }
+
+
+        const ownerName =
+            pathParts[0];
+
+        const repoName =
+            pathParts[1]
+                .replace(/\.git$/, "");
+
+
+        // =========================
+        // SAVE REPOSITORY
+        // =========================
+
+        project.githubRepoUrl =
+            `https://github.com/${ownerName}/${repoName}`;
+
+        project.githubRepoName =
+            repoName;
+
+
+        await project.save();
+
+
+        // =========================
+        // RESPONSE
+        // =========================
+
+        return res.status(200).json({
+
+            success: true,
+
+            message:
+                "GitHub repository connected successfully",
+
+            project,
+
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Connect GitHub repository error:",
+            error
+        );
+
+
+        return res.status(500).json({
+
+            success: false,
+
+            message:
+                "Internal Server Error",
+
+        });
+
+    }
+
+};
+
+// =========================
+// GET GITHUB REPOSITORY
+// =========================
+
+const getGithubRepository = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+
+        const project =
+            await Project.findById(projectId);
+
+        if (!project) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+
+        }
+
+
+        const isMember =
+            project.members.find(
+                (member) =>
+                    member.user.toString() ===
+                    req.user._id.toString()
+            );
+
+        if (!isMember) {
+
+            return res.status(403).json({
+                success: false,
+                message:
+                    "You are not a member of this project",
+            });
+
+        }
+
+
+        if (!project.githubRepoUrl) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "No GitHub repository connected",
+            });
+
+        }
+
+
+        const repository =
+            await getRepository(
+                project.githubRepoUrl
+            );
+
+
+        return res.status(200).json({
+            success: true,
+            repository,
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Get GitHub repository error:",
+            error.message
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to fetch GitHub repository",
+        });
+
+    }
+
+};
+
+
+// =========================
+// GET GITHUB BRANCHES
+// =========================
+
+const getGithubBranches = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+
+        const project =
+            await Project.findById(projectId);
+
+        if (!project) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+
+        }
+
+
+        const isMember =
+            project.members.find(
+                (member) =>
+                    member.user.toString() ===
+                    req.user._id.toString()
+            );
+
+        if (!isMember) {
+
+            return res.status(403).json({
+                success: false,
+                message:
+                    "You are not a member of this project",
+            });
+
+        }
+
+
+        if (!project.githubRepoUrl) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "No GitHub repository connected",
+            });
+
+        }
+
+
+        const branches =
+            await getBranches(
+                project.githubRepoUrl
+            );
+
+
+        return res.status(200).json({
+            success: true,
+            branches,
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Get GitHub branches error:",
+            error.message
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to fetch GitHub branches",
+        });
+
+    }
+
+};
+
+
+// =========================
+// GET GITHUB FILES
+// =========================
+
+const getGithubFiles = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+
+        const path =
+            req.query.path || "";
+
+
+        const project =
+            await Project.findById(projectId);
+
+        if (!project) {
+
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+
+        }
+
+
+        const isMember =
+            project.members.find(
+                (member) =>
+                    member.user.toString() ===
+                    req.user._id.toString()
+            );
+
+        if (!isMember) {
+
+            return res.status(403).json({
+                success: false,
+                message:
+                    "You are not a member of this project",
+            });
+
+        }
+
+
+        if (!project.githubRepoUrl) {
+
+            return res.status(400).json({
+                success: false,
+                message:
+                    "No GitHub repository connected",
+            });
+
+        }
+
+
+        const files =
+            await getFiles(
+                project.githubRepoUrl,
+                path
+            );
+
+
+        return res.status(200).json({
+            success: true,
+            files,
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Get GitHub files error:",
+            error.message
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to fetch GitHub files",
+        });
+
+    }
+
+};
+
+const getGithubFileContent = async (req, res) => {
+
+    try {
+
+        const { projectId } = req.params;
+
+        const path = req.query.path;
+
+        if (!path) {
+            return res.status(400).json({
+                success: false,
+                message: "File path is required",
+            });
+        }
+
+        const project =
+            await Project.findById(projectId);
+
+        if (!project) {
+            return res.status(404).json({
+                success: false,
+                message: "Project not found",
+            });
+        }
+
+        const isMember =
+            project.members.find(
+                (member) =>
+                    member.user.toString() ===
+                    req.user._id.toString()
+            );
+
+        if (!isMember) {
+            return res.status(403).json({
+                success: false,
+                message:
+                    "You are not a member of this project",
+            });
+        }
+
+        if (!project.githubRepoUrl) {
+            return res.status(400).json({
+                success: false,
+                message:
+                    "No GitHub repository connected",
+            });
+        }
+
+        const file =
+            await getFileContent(
+                project.githubRepoUrl,
+                path
+            );
+
+        return res.status(200).json({
+            success: true,
+            file,
+        });
+
+    } catch (error) {
+
+        console.log(
+            "Get GitHub file content error:",
+            error.message
+        );
+
+        return res.status(500).json({
+            success: false,
+            message:
+                "Failed to fetch GitHub file",
+        });
+    }
+};
+
 module.exports = {
   createProject,
   getProjects,
@@ -560,5 +1153,11 @@ module.exports = {
   changeMembersRole,
   removeMember,
   leaveProject,
-  transferOwnership
+  transferOwnership,
+  getProjectMessages,
+  connectGithubRepository,
+  getGithubRepository,
+getGithubBranches,
+getGithubFiles,
+getGithubFileContent,
 };

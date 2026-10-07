@@ -1,26 +1,43 @@
-import api from "./api";
+import { io } from "socket.io-client";
 
-export const getProjects = async () => {
-  const response = await api.get("/projects");
-  return response.data;
+const SOCKET_URL = "http://localhost:5000";
+
+const socket = io(SOCKET_URL, {
+    withCredentials: true,
+    autoConnect: false,
+});
+
+export const connectSocket = () => {
+    if (!socket.connected) {
+        socket.connect();
+    }
+
+    return socket;
 };
 
-export const getProjectById = async (projectId) => {
-  const response = await api.get(`/projects/${projectId}`);
-  return response.data;
+export const disconnectSocket = () => {
+    if (socket.connected) {
+        socket.disconnect();
+    }
 };
 
-export const createProject = async (projectData) => {
-  const response = await api.post("/projects", projectData);
-  return response.data;
+export const joinProject = (projectId) => {
+    socket.emit("join-project", projectId);
 };
 
-export const updateProject = async (projectId, projectData) => {
-  const response = await api.patch(`/projects/${projectId}`, projectData);
-  return response.data;
+export const leaveProjectRoom = (projectId) => {
+    socket.emit("leave-project", projectId);
 };
 
-export const deleteProject = async (projectId) => {
-  const response = await api.delete(`/projects/${projectId}`);
-  return response.data;
+export const sendMessage = (projectId, message) => {
+    socket.emit("send-message", {
+        projectId,
+        message,
+    });
 };
+
+export const getSocket = () => {
+    return socket;
+};
+
+export default socket;

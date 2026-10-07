@@ -38,10 +38,29 @@ const projectSchema = new mongoose.Schema(
                 },
             },
         ],
+
+        // =========================
+        // GITHUB REPOSITORY
+        // =========================
+
+        githubRepoUrl: {
+            type: String,
+            trim: true,
+            default: null,
+        },
+
+        githubRepoName: {
+            type: String,
+            trim: true,
+            default: null,
+        },
     },
     {
         timestamps: true,
     }
 );
 
-module.exports = mongoose.model("Project", projectSchema);
+module.exports = mongoose.model(
+    "Project",
+    projectSchema
+);

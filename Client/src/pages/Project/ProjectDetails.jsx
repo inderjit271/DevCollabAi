@@ -11,6 +11,7 @@ import { useAuth } from "../../context/AuthContext";
 
 import {
     getProjectById,
+    getProjectMessages,
     inviteMember,
     changeMemberRole,
     removeMember,
@@ -18,7 +19,18 @@ import {
     transferOwnership,
     updateProject,
     deleteProject,
+    connectGithubRepository,
+    getGithubFiles,
+    getGithubFileContent,
 } from "../../services/project.service";
+
+import {
+    connectSocket,
+    disconnectSocket,
+    joinProject,
+    leaveProjectRoom,
+    getSocket,
+} from "../../services/socket.service";
 
 
 function ProjectDetails() {
@@ -29,62 +41,80 @@ function ProjectDetails() {
 
     const { user } = useAuth();
 
+    console.log("CURRENT AUTH USER:", user);
 
     // =========================
     // PROJECT STATES
     // =========================
 
-    const [project, setProject] =
-        useState(null);
+    const [project, setProject] = useState(null);
 
-    const [loading, setLoading] =
-        useState(true);
+    const [loading, setLoading] = useState(true);
+
+    const [githubFiles, setGithubFiles] = useState([]);
+    const [githubLoading, setGithubLoading] = useState(false);
+    const [githubPath, setGithubPath] = useState("");
+
+    const [selectedFile, setSelectedFile] = useState(null);
+    const [fileLoading, setFileLoading] = useState(false);
+
+    const [socketConnected, setSocketConnected] = useState(false);
+    const [joinedProject, setJoinedProject] = useState(false);
 
 
     // =========================
     // INVITE STATES
     // =========================
 
-    const [isInviteModalOpen, setIsInviteModalOpen] =
-        useState(false);
+    const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
 
-    const [email, setEmail] =
-        useState("");
+    const [email, setEmail] = useState("");
 
-    const [inviting, setInviting] =
-        useState(false);
+    const [inviting, setInviting] = useState(false);
 
 
     // =========================
     // TRANSFER STATES
     // =========================
 
-    const [isTransferModalOpen, setIsTransferModalOpen] =
-        useState(false);
+    const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
 
-    const [selectedOwnerId, setSelectedOwnerId] =
-        useState("");
+    const [selectedOwnerId, setSelectedOwnerId] = useState("");
 
-    const [transferring, setTransferring] =
-        useState(false);
+    const [transferring, setTransferring] = useState(false);
+    
 
+    // =========================
+// CHAT STATES
+// =========================
+
+const [messages, setMessages] = useState([]);
+
+const [messageInput, setMessageInput] = useState("");
+
+const [sendingMessage, setSendingMessage] = useState(false);
 
     // =========================
     // EDIT PROJECT STATES
     // =========================
 
-    const [isEditModalOpen, setIsEditModalOpen] =
-        useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
-    const [editTitle, setEditTitle] =
-        useState("");
+    const [editTitle, setEditTitle] = useState("");
 
-    const [editDescription, setEditDescription] =
-        useState("");
+    const [editDescription, setEditDescription] = useState("");
 
-    const [updating, setUpdating] =
-        useState(false);
+    const [updating, setUpdating] = useState(false);
 
+    // =========================
+// GITHUB STATES
+// =========================
+
+const [isGithubModalOpen, setIsGithubModalOpen] = useState(false);
+
+const [githubRepoUrl, setGithubRepoUrl] = useState("");
+
+const [connectingGithub, setConnectingGithub] = useState(false);
 
     // =========================
     // FETCH PROJECT
@@ -128,6 +158,116 @@ function ProjectDetails() {
 
     };
 
+    const fetchGithubFiles = async (path = "") => {
+    try {
+        setGithubLoading(true);
+
+        const data = await getGithubFiles(
+            projectId,
+            path
+        );
+
+        setGithubFiles(data.files || []);
+        setGithubPath(path);
+
+    } catch (error) {
+
+        console.error(
+            "Fetch GitHub files error:",
+            error
+        );
+
+        toast.error(
+            error.response?.data?.message ||
+            "Failed to fetch GitHub files"
+        );
+
+    } finally {
+        setGithubLoading(false);
+    }
+};
+
+const fetchGithubFileContent = async (path) => {
+
+    try {
+
+        setFileLoading(true);
+
+        const data =
+            await getGithubFileContent(
+                projectId,
+                path
+            );
+
+        setSelectedFile(data.file);
+
+    } catch (error) {
+
+        console.error(
+            "Fetch GitHub file error:",
+            error
+        );
+
+        toast.error(
+            error.response?.data?.message ||
+            "Failed to load file"
+        );
+
+    } finally {
+
+        setFileLoading(false);
+
+    }
+};
+    
+    // =========================
+// FETCH PROJECT MESSAGES
+// =========================
+
+const fetchMessages = async () => {
+
+    try {
+
+        const data =
+            await getProjectMessages(
+                projectId
+            );
+
+        const formattedMessages =
+            data.messages.map(
+                (message) => ({
+                    _id: message._id,
+
+                    sender: {
+                        id:
+                            message.sender?._id,
+                        name:
+                            message.sender?.name,
+                    },
+
+                    message:
+                        message.message,
+
+                    createdAt:
+                        message.createdAt,
+                })
+            );
+
+        setMessages(
+            formattedMessages
+        );
+
+    } catch (error) {
+
+        const message =
+            error.response?.data?.message ||
+            "Failed to load messages";
+
+        toast.error(message);
+
+    }
+
+};
 
     // =========================
     // OPEN EDIT MODAL
@@ -263,6 +403,68 @@ function ProjectDetails() {
 
     };
 
+    // =========================
+// CONNECT GITHUB REPOSITORY
+// =========================
+
+const handleConnectGithub = async (e) => {
+
+    e.preventDefault();
+
+    const trimmedUrl =
+        githubRepoUrl.trim();
+
+
+    if (!trimmedUrl) {
+
+        return toast.error(
+            "GitHub repository URL is required"
+        );
+
+    }
+
+
+    try {
+
+        setConnectingGithub(true);
+
+
+        const data =
+            await connectGithubRepository(
+                projectId,
+                trimmedUrl
+            );
+
+
+        toast.success(
+            data.message ||
+            "GitHub repository connected successfully"
+        );
+
+
+        setIsGithubModalOpen(false);
+
+        setGithubRepoUrl("");
+
+
+        await fetchProject();
+
+    } catch (error) {
+
+        const message =
+            error.response?.data?.message ||
+            "Failed to connect GitHub repository";
+
+
+        toast.error(message);
+
+    } finally {
+
+        setConnectingGithub(false);
+
+    }
+
+};
 
     // =========================
     // INVITE MEMBER
@@ -325,6 +527,38 @@ function ProjectDetails() {
 
     };
 
+    // =========================
+// SEND CHAT MESSAGE
+// =========================
+
+const handleSendMessage = (e) => {
+
+    e.preventDefault();
+
+    const message = messageInput.trim();
+
+    if (!message) {
+        return;
+    }
+
+    const socket = connectSocket();
+
+    if (!socket.connected) {
+        toast.error("Socket is not connected");
+        return;
+    }
+
+    setSendingMessage(true);
+
+    socket.emit("send-message", {
+        projectId,
+        message,
+    });
+
+    setMessageInput("");
+
+    setSendingMessage(false);
+};
 
     // =========================
     // CHANGE MEMBER ROLE
@@ -538,8 +772,160 @@ function ProjectDetails() {
     useEffect(() => {
 
         fetchProject();
+        fetchMessages();
 
     }, [projectId]);
+
+    useEffect(() => {
+
+    if (project?.githubRepoUrl) {
+        fetchGithubFiles();
+    }
+
+}, [project?.githubRepoUrl, projectId]);
+    // =========================
+// SOCKET CONNECTION
+// =========================
+
+useEffect(() => {
+
+    if (!projectId) {
+        return;
+    }
+
+    const socket = connectSocket();
+
+    const handleConnect = () => {
+
+        console.log(
+            "Socket connected:",
+            socket.id
+        );
+
+        setSocketConnected(true);
+
+        joinProject(projectId);
+    };
+
+
+    const handleDisconnect = () => {
+
+        console.log(
+            "Socket disconnected"
+        );
+
+        setSocketConnected(false);
+        setJoinedProject(false);
+
+    };
+
+
+    const handleJoinedProject = (data) => {
+
+        console.log(
+            "Joined project:",
+            data
+        );
+
+        setJoinedProject(true);
+
+    };
+
+
+    const handleSocketError = (error) => {
+
+        console.error(
+            "Socket error:",
+            error
+        );
+
+    };
+
+    const handleReceiveMessage = (messageData) => {
+
+    console.log(
+        "New message:",
+        messageData
+    );
+
+    setMessages((prevMessages) => [
+        ...prevMessages,
+        messageData,
+    ]);
+
+};
+
+    socket.on(
+        "connect",
+        handleConnect
+    );
+
+    socket.on(
+        "disconnect",
+        handleDisconnect
+    );
+
+    socket.on(
+        "joined-project",
+        handleJoinedProject
+    );
+
+    socket.on(
+        "error",
+        handleSocketError
+    );
+
+    socket.on(
+    "receive-message",
+    handleReceiveMessage
+);
+
+    // If socket is already connected
+    if (socket.connected) {
+
+        handleConnect();
+
+    }
+
+
+    // =========================
+    // SOCKET CLEANUP
+    // =========================
+
+    return () => {
+
+        leaveProjectRoom(projectId);
+
+        socket.off(
+            "connect",
+            handleConnect
+        );
+
+        socket.off(
+            "disconnect",
+            handleDisconnect
+        );
+
+        socket.off(
+            "joined-project",
+            handleJoinedProject
+        );
+
+        socket.off(
+            "error",
+            handleSocketError
+        );
+
+        socket.off(
+          "receive-message",
+           handleReceiveMessage
+        );
+
+        disconnectSocket();
+
+    };
+
+}, [projectId]);
 
 
     // =========================
@@ -706,6 +1092,260 @@ function ProjectDetails() {
                     </p>
 
                 </section>
+
+               {/* =========================
+    GITHUB REPOSITORY
+========================= */}
+
+<section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+        <div>
+
+            <h2 className="text-xl font-semibold">
+                🐙 GitHub Repository
+            </h2>
+
+            {project.githubRepoUrl ? (
+
+                <a
+                    href={project.githubRepoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-block text-sm text-cyan-400 hover:text-cyan-300 hover:underline"
+                >
+                    {project.githubRepoUrl}
+                </a>
+
+            ) : (
+
+                <p className="mt-2 text-sm text-slate-400">
+                    No GitHub repository connected.
+                </p>
+
+            )}
+
+        </div>
+
+
+        <div>
+
+            {project.githubRepoUrl ? (
+
+                <a
+                    href={project.githubRepoUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded-lg border border-cyan-500/30 px-4 py-2 text-sm font-medium text-cyan-400 transition hover:bg-cyan-500/10"
+                >
+                    Open Repository
+                </a>
+
+            ) : isOwner ? (
+
+                <button
+                    onClick={() =>
+                        setIsGithubModalOpen(true)
+                    }
+                    className="rounded-lg bg-cyan-500 px-4 py-2 font-semibold text-slate-950 transition hover:bg-cyan-400"
+                >
+                    Connect GitHub
+                </button>
+
+            ) : null}
+
+        </div>
+
+    </div>
+
+</section>
+
+{/* GitHUb files */}
+
+ <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+   <div className="flex items-center justify-between">
+
+    <div>
+
+        <h2 className="text-xl font-semibold">
+            Repository Files
+        </h2>
+
+        {githubPath && (
+            <p className="mt-1 text-xs text-slate-500">
+                {githubPath}
+            </p>
+        )}
+
+    </div>
+
+
+    {githubPath && (
+
+        <button
+            type="button"
+            onClick={() => {
+
+                const parts =
+                    githubPath
+                        .split("/")
+                        .filter(Boolean);
+
+                parts.pop();
+
+                const parentPath =
+                    parts.join("/");
+
+                fetchGithubFiles(parentPath);
+
+            }}
+            className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+        >
+            ← Back
+        </button>
+
+    )}
+
+</div>
+
+    {!project.githubRepoUrl ? (
+
+        <p className="mt-3 text-slate-400">
+            No GitHub repository connected.
+        </p>
+
+    ) : githubLoading ? (
+
+        <p className="mt-3 text-slate-400">
+            Loading files...
+        </p>
+
+    ) : (
+
+        <div className="mt-4 space-y-2">
+
+            {githubFiles.map((file) => (
+
+                <div
+                    key={file.path}
+                    onClick={() => {
+
+                        if (file.type === "dir") {
+
+                            fetchGithubFiles(file.path);
+
+                        } else {
+
+                            fetchGithubFileContent(file.path);
+
+                        }
+
+                    }}
+                    className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-4 py-3 transition hover:bg-slate-800"
+                >
+
+                    <div>
+
+                        <p className="font-medium">
+                            {file.type === "dir"
+                                ? "📁"
+                                : "📄"}{" "}
+                            {file.name}
+                        </p>
+
+                        <p className="text-xs text-slate-500">
+                            {file.path}
+                        </p>
+
+                    </div>
+
+                    {file.html_url && (
+
+                        <a
+                            href={file.html_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) =>
+                                e.stopPropagation()
+                            }
+                            className="text-sm text-cyan-400 hover:text-cyan-300"
+                        >
+                            Open
+                        </a>
+
+                    )}
+
+                </div>
+
+            ))}
+
+        </div>
+
+    )}
+
+</section>
+
+
+{/* CODE VIEWER */}
+
+{selectedFile && (
+
+    <section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+        <div className="mb-4 flex items-center justify-between">
+
+            <div>
+
+                <h2 className="text-xl font-semibold">
+                    {selectedFile.name}
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                    {selectedFile.path}
+                </p>
+
+            </div>
+
+            <button
+                onClick={() => setSelectedFile(null)}
+                className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800"
+            >
+                Close
+            </button>
+
+        </div>
+
+
+        {fileLoading ? (
+
+            <p className="text-slate-400">
+                Loading code...
+            </p>
+
+        ) : (
+
+            <pre className="max-h-[600px] overflow-auto rounded-xl border border-slate-800 bg-slate-950 p-5 text-sm leading-6 text-slate-300">
+
+                <code>
+                    {selectedFile.content
+                        ? atob(
+                            selectedFile.content.replace(
+                                /\n/g,
+                                ""
+                            )
+                        )
+                        : "No content available"}
+                </code>
+
+            </pre>
+
+        )}
+
+    </section>
+
+)}
 
 
                 {/* MEMBERS */}
@@ -905,6 +1545,137 @@ function ProjectDetails() {
                     )}
 
                 </section>
+ 
+
+                {/* =========================
+    REAL-TIME CHAT
+========================= */}
+
+<section className="mt-6 rounded-2xl border border-slate-800 bg-slate-900 p-6">
+
+    <div className="mb-5">
+
+        <h2 className="text-xl font-semibold">
+            Project Chat
+        </h2>
+
+        <p className="mt-1 text-sm text-slate-400">
+            Real-time project communication
+        </p>
+
+    </div>
+
+    {/* MESSAGES */}
+
+    <div className="mb-5 h-80 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950 p-4">
+
+        {messages.length === 0 ? (
+
+            <div className="flex h-full items-center justify-center">
+
+                <p className="text-sm text-slate-500">
+                    No messages yet. Start the conversation.
+                </p>
+
+            </div>
+
+        ) : (
+
+            <div className="space-y-4">
+
+                {messages.map((message, index) => {
+
+                    const senderId =
+                        message.sender?.id?.toString();
+
+                    const currentId =
+                        currentUserId?.toString();
+
+                    const isOwnMessage =
+                        senderId === currentId;
+
+                    return (
+
+                        <div
+                            key={`${message.createdAt}-${index}`}
+                            className={`flex ${
+                                isOwnMessage
+                                    ? "justify-end"
+                                    : "justify-start"
+                            }`}
+                        >
+
+                            <div
+                                className={`max-w-[75%] rounded-2xl px-4 py-3 ${
+                                    isOwnMessage
+                                        ? "bg-cyan-500 text-slate-950"
+                                        : "bg-slate-800 text-white"
+                                }`}
+                            >
+
+                                <p
+                                    className={`mb-1 text-xs font-semibold ${
+                                        isOwnMessage
+                                            ? "text-slate-900"
+                                            : "text-cyan-400"
+                                    }`}
+                                >
+                                    {isOwnMessage
+                                        ? "You"
+                                        : message.sender?.name ||
+                                          "Unknown User"}
+                                </p>
+
+                                <p className="break-words text-sm">
+                                    {message.message}
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                    );
+
+                })}
+
+            </div>
+
+        )}
+
+    </div>
+
+    {/* SEND MESSAGE */}
+
+    <form
+        onSubmit={handleSendMessage}
+        className="flex gap-3"
+    >
+
+        <input
+            type="text"
+            value={messageInput}
+            onChange={(e) =>
+                setMessageInput(e.target.value)
+            }
+            placeholder="Type a message..."
+            disabled={sendingMessage}
+            className="flex-1 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:opacity-60"
+        />
+
+        <button
+            type="submit"
+            disabled={
+                sendingMessage ||
+                !messageInput.trim()
+            }
+            className="rounded-lg bg-cyan-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+            Send
+        </button>
+
+    </form>
+
+</section>
 
             </main>
 
@@ -1353,6 +2124,119 @@ function ProjectDetails() {
                     </div>
                 </div>
             )}
+
+        {/* =========================
+    GITHUB MODAL
+========================= */}
+
+{isGithubModalOpen && (
+
+    <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+        onMouseDown={() => {
+
+            if (!connectingGithub) {
+                setIsGithubModalOpen(false);
+            }
+
+        }}
+    >
+
+        <div
+            className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl"
+            onMouseDown={(e) =>
+                e.stopPropagation()
+            }
+        >
+
+            <div className="mb-6">
+
+                <h2 className="text-xl font-semibold">
+                    Connect GitHub Repository
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-400">
+                    Enter the URL of your GitHub repository.
+                </p>
+
+            </div>
+
+
+            <form
+                onSubmit={handleConnectGithub}
+                className="space-y-5"
+            >
+
+                <div>
+
+                    <label
+                        htmlFor="github-repo-url"
+                        className="mb-2 block text-sm font-medium text-slate-300"
+                    >
+                        GitHub Repository URL
+                    </label>
+
+
+                    <input
+                        id="github-repo-url"
+                        type="url"
+                        value={githubRepoUrl}
+                        onChange={(e) =>
+                            setGithubRepoUrl(
+                                e.target.value
+                            )
+                        }
+                        placeholder="https://github.com/username/repository"
+                        disabled={connectingGithub}
+                        required
+                        className="w-full rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-400 disabled:opacity-60"
+                    />
+
+                </div>
+
+
+                <div className="flex justify-end gap-3">
+
+                    <button
+                        type="button"
+                        onClick={() => {
+
+                            setGithubRepoUrl("");
+
+                            setIsGithubModalOpen(
+                                false
+                            );
+
+                        }}
+                        disabled={connectingGithub}
+                        className="rounded-lg border border-slate-700 px-5 py-2.5 font-medium text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                    >
+                        Cancel
+                    </button>
+
+
+                    <button
+                        type="submit"
+                        disabled={connectingGithub}
+                        className="rounded-lg bg-cyan-500 px-5 py-2.5 font-semibold text-slate-950 hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+
+                        {connectingGithub
+                            ? "Connecting..."
+                            : "Connect Repository"}
+
+                    </button>
+
+                </div>
+
+            </form>
+
+        </div>
+
+    </div>
+
+)}
+
         </div>
     );
 }
